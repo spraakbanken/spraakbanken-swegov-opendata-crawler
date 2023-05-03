@@ -1,4 +1,5 @@
 use reqwest::Client;
+use tracing::{event, Level};
 
 #[tokio::main]
 async fn main() {
@@ -9,6 +10,11 @@ async fn main() {
 }
 
 async fn try_main() -> anyhow::Result<()> {
+    // construct a subscriber that prints formatted traces to stdout
+    let subscriber = tracing_subscriber::FmtSubscriber::new();
+    // use that subscriber to process traces emitted after this point
+    tracing::subscriber::set_global_default(subscriber)?;
+
     let client = client()?;
     let res = client.get("https://www.rust-lang.org").send().await?;
 
@@ -21,6 +27,7 @@ async fn try_main() -> anyhow::Result<()> {
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"),);
 
 fn client() -> anyhow::Result<Client> {
+    event!(Level::WARN, user_agent = APP_USER_AGENT);
     let client = reqwest::Client::builder()
         .user_agent(APP_USER_AGENT)
         .build()?;
