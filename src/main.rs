@@ -1,5 +1,13 @@
+use std::time::Duration;
+
 use reqwest::Client;
 use tracing::{event, Level};
+
+use crate::crawler::Crawler;
+
+mod crawler;
+mod error;
+mod spiders;
 
 #[tokio::main]
 async fn main() {
@@ -15,6 +23,7 @@ async fn try_main() -> anyhow::Result<()> {
     // use that subscriber to process traces emitted after this point
     tracing::subscriber::set_global_default(subscriber)?;
 
+    let crawler = Crawler::new(Duration::from_millis(500), 2, 50);
     let client = client()?;
     let res = client.get("https://www.rust-lang.org").send().await?;
 
