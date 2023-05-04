@@ -27,7 +27,7 @@ async fn try_main() -> anyhow::Result<()> {
         .json()
         .with_env_filter(
             EnvFilter::try_from_default_env()
-                .or_else(|_| EnvFilter::try_new("fetch_sfs=trace,warn"))
+                .or_else(|_| EnvFilter::try_new("fetch_sfs=info,warn"))
                 .expect("telemetry: Creating EnvFilter"),
         )
         .with_writer(io::stderr)
@@ -40,7 +40,6 @@ async fn try_main() -> anyhow::Result<()> {
     let crawler = Crawler::new(Duration::from_millis(500), 2, 50);
     let spider = Arc::new(spiders::sfs::SfsSpider::new(config.sfs));
     crawler.run(spider).await;
-
     Ok(())
 }
 
