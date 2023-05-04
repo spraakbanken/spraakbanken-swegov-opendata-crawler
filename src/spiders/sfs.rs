@@ -72,7 +72,7 @@ impl Default for SfsSpiderOptions {
 }
 #[async_trait]
 impl super::Spider for SfsSpider {
-    type Item = JsonValue;
+    type Item = JsonOrLista;
 
     fn name(&self) -> String {
         String::from("sfs")
@@ -131,11 +131,12 @@ impl super::Spider for SfsSpider {
             for dokument in &dokument_lista.dokument {
                 new_urls.push(format!("{dokument_url}/{}?utdata=json", dokument.dok_id))
             }
+            items.push(JsonOrLista::Lista(dokument_lista));
         } else if url.contains("dokumentstatus") {
             let dokument: JsonValue = response.json().await.with_context(|| {
                 format!("Failed parsing JSON as dokumentstatus for url='{}'", url)
             })?;
-            items.push(dokument);
+            items.push(JsonOrLista::Dokument(dokument));
         } else {
             tracing::error!("don't know how to scrape '{}'", url);
             return Err(anyhow!("don't know how to scrape '{}'", url));
@@ -148,34 +149,58 @@ impl super::Spider for SfsSpider {
     async fn process(&self, item: Self::Item) -> Result<(), Error> {
         let mut path = self.output_path.clone();
         tracing::trace!("{:?}", item);
-        let dokumentstatus = &item["dokumentstatus"];
-        let dokument_typ = dokumentstatus["dokument"]["typ"]
-            .as_str()
-            .unwrap_or("NO_TYP");
-        path.push(dokument_typ);
-        let dokument_rm = dokumentstatus["dokument"]["rm"].as_str().unwrap_or("NO_RM");
-        path.push(dokument_rm);
-        tracing::debug!("creating dirs {:?}", path);
-        tokio::fs::create_dir_all(&path).await?;
-        let file_name = dokumentstatus["dokument"]["dok_id"]
-            .as_str()
-            .ok_or(anyhow!("spiders/sfs: can't get dokument.dok_id"))?;
-        path.push(&file_name.replace(" ", "_"));
-        // let file_name = format!("{file_name}.json");
-        path.set_extension("json.gz");
-        tracing::debug!("creating file {:?}", path);
-        let file = std::fs::File::create(path)?;
-        let compress_writer = flate2::write::GzEncoder::new(file, Compression::default());
-        let writer = std::io::BufWriter::new(compress_writer);
+        match item {
+            JsonOrLista::Dokument(item) => {
+                let dokumentstatus = &item["dokumentstatus"];
+                let dokument_typ = dokumentstatus["dokument"]["typ"]
+                    .as_str()
+                    .unwrap_or("NO_TYP");
+                path.push(dokument_typ);
+                let dokument_rm = dokumentstatus["dokument"]["rm"].as_str().unwrap_or("NO_RM");
+                path.push(dokument_rm);
+                tracing::debug!("creating dirs {:?}", path);
+                tokio::fs::create_dir_all(&path).await?;
+                let file_name = dokumentstatus["dokument"]["dok_id"]
+                    .as_str()
+                    .ok_or(anyhow!("spiders/sfs: can't get dokument.dok_id"))?;
+                path.push(&file_name.replace(" ", "_"));
+                // let file_name = format!("{file_name}.json");
+                path.set_extension("json.gz");
+                tracing::debug!("creating file {:?}", path);
+                let file = std::fs::File::create(path)?;
+                let compress_writer = flate2::write::GzEncoder::new(file, Compression::default());
+                let writer = std::io::BufWriter::new(compress_writer);
 
-        tracing::debug!("writing JSON");
-        serde_json::to_writer(writer, &item)?;
+                tracing::debug!("writing JSON");
+                serde_json::to_writer(writer, &item)?;
+            }
+            JsonOrLista::Lista(lista) => {
+                path.push("dokumentlista");
+                tracing::debug!("creating dirs {:?}", path);
+                tokio::fs::create_dir_all(&path).await?;
+
+                path.push(&lista.q.replace("&", "_"));
+                // let file_name = format!("{file_name}.json");
+                path.set_extension("json.gz");
+                tracing::debug!("creating file {:?}", path);
+                let file = std::fs::File::create(path)?;
+                let compress_writer = flate2::write::GzEncoder::new(file, Compression::default());
+                let writer = std::io::BufWriter::new(compress_writer);
+                tracing::debug!("writing JSON");
+                serde_json::to_writer(writer, &lista)?;
+            }
+        }
         // todo!("impl process")
         // println!("process: dokument={:#?}", item);
         Ok(())
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum JsonOrLista {
+    Dokument(JsonValue),
+    Lista(DokumentLista),
+}
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct DokumentStatusPage {
     dokumentstatus: DokumentStatus,
@@ -223,13 +248,15 @@ pub struct Uppgift {
 pub struct DokumentListaPage {
     dokumentlista: DokumentLista,
 }
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct DokumentLista {
     dokument: Vec<DokumentListaDokument>,
     #[serde(rename = "@nasta_sida")]
     nasta_sida: String,
     #[serde(rename = "@sida")]
     sida: String,
+    #[serde(rename = "@q")]
+    q: String,
     #[serde(rename = "@sidor")]
     sidor: String,
     #[serde(rename = "@traffar")]
@@ -242,7 +269,7 @@ pub struct DokumentLista {
     version: String,
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct DokumentListaDokument {
     id: String,
     dok_id: String,
