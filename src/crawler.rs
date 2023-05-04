@@ -114,7 +114,12 @@ impl Crawler {
         tokio::spawn(async move {
             tokio_stream::wrappers::ReceiverStream::new(items)
                 .for_each_concurrent(concurrency, |item| async {
-                    let _ = spider.process(item).await;
+                    // let span = tracing::info_span!("processing");
+                    // let _enter = span.enter();
+                    let _ = spider.process(item).await.map_err(|err| {
+                        tracing::error!("{:?}", err);
+                        err
+                    });
                 })
                 .await;
 
@@ -140,11 +145,13 @@ impl Crawler {
                     async {
                         active_spiders.fetch_add(1, Ordering::SeqCst);
                         let mut urls = Vec::new();
+                        // let span = tracing::info_span!("scraping", url = queued_url);
+                        // let _enter = span.enter();
                         let res = spider
                             .scrape(queued_url.clone())
                             .await
                             .map_err(|err| {
-                                event!(Level::ERROR, "{:?}", err);
+                                tracing::error!("{:?}", err);
                                 err
                             })
                             .ok();

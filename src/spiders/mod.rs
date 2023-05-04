@@ -2,7 +2,7 @@ pub mod sfs;
 
 use async_trait::async_trait;
 
-use crate::error::Error;
+use crate::Error;
 
 #[async_trait]
 pub trait Spider: Send + Sync {
