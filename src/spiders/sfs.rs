@@ -1,13 +1,10 @@
 use std::{fmt::Debug, path::PathBuf};
 
-use anyhow::{anyhow, Context};
 use async_trait::async_trait;
-use chrono::{NaiveDate, NaiveDateTime};
 use flate2::Compression;
-use reqwest::{Client, ClientBuilder};
+use reqwest::Client;
 use serde_json::Value as JsonValue;
-use std::{fs, io};
-use tracing::{event, info_span, Level};
+use std::fs;
 use ulid::Ulid;
 
 use crate::Error;
@@ -80,14 +77,9 @@ impl super::Spider for SfsSpider {
     }
 
     fn start_urls(&self) -> Vec<String> {
-        let base_url = "https://data.riksdagen.se/dokumentlista/?sok=&doktyp=SFS&utdata=json";
         let base_url = "https://data.riksdagen.se/dokumentlista/?sok=&doktyp=SFS&rm=&ts=&bet=&tempbet=&nr=&org=&iid=&avd=&webbtv=&talare=&exakt=&planering=&facets=&sort=rel&sortorder=desc&rapport=&utformat=json";
-        // let base_url = "https://data.riksdagen.se/dokumentlista/?sok=&doktyp=SFS&rm=&from=1880-01-01&tom=1920-01-01&ts=&bet=&tempbet=&nr=&org=&iid=&avd=&webbtv=&talare=&exakt=&planering=&facets=&sort=rel&sortorder=desc&rapport=&utformat=json&a=s#soktraff";
         let mut urls = Vec::new();
-        // vec![String::from(
-        //     "https://data.riksdagen.se/dokumentlista/?sok=&doktyp=SFS&rm=&from=1880-01-01&tom=&ts=&bet=&tempbet=&nr=&org=&iid=&avd=&webbtv=&talare=&exakt=&planering=&facets=&sort=rel&sortorder=desc&rapport=&utformat=json&a=s#soktraff",
-        //     "https://data.riksdagen.se/dokumentlista/?sok=&doktyp=SFS&rm=&from=1880-01-01&tom=&ts=&bet=&tempbet=&nr=&org=&iid=&avd=&webbtv=&talare=&exakt=&planering=&facets=&sort=rel&sortorder=desc&rapport=&utformat=json&a=s#soktraff",
-        // )];
+
         for (from_year, to_year) in [
             (1880, 1900),
             (1901, 1920),
@@ -186,7 +178,7 @@ impl super::Spider for SfsSpider {
                 .ok_or_else(|| {
                     Error::UnexpectedJsonFormat("can't find 'dokument.dok_id'".into())
                 })?;
-            let file_name = dok_id.replace(" ", "_");
+            file_name = dok_id.replace(" ", "_");
         }
 
         tracing::debug!("creating dirs {:?}", path);
@@ -201,7 +193,7 @@ impl super::Spider for SfsSpider {
         }
         // let file_name = format!("{file_name}.json");
         path.set_extension("json.gz");
-        let span = info_span!("creating file filename='{}'", "{}", path.display());
+        let span = tracing::info_span!("creating file filename='{}'", "{}", path.display());
         let _enter = span.enter();
         tracing::debug!("creating file {:?}", path);
         let file = std::fs::File::create(path).map_err(|err| {

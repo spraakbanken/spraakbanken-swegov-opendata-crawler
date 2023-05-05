@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use crate::spiders::sfs::SfsSpiderOptions;
 
 #[derive(serde::Deserialize, Clone)]

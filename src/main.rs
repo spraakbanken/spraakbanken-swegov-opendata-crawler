@@ -1,8 +1,6 @@
 use std::{io, sync::Arc, time::Duration};
 
-use reqwest::Client;
-use tracing::{event, Level};
-use tracing_subscriber::{EnvFilter, FmtSubscriber};
+use tracing_subscriber::EnvFilter;
 
 use crate::crawler::Crawler;
 
