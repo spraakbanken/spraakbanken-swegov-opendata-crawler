@@ -12,7 +12,6 @@ use tokio::{
     sync::{mpsc, Barrier},
     time::sleep,
 };
-use tracing::{event, Level};
 
 pub struct Crawler {
     delay: Duration,
@@ -34,7 +33,7 @@ impl Crawler {
     }
 
     pub async fn run<T: Send + 'static>(&self, spider: Arc<dyn Spider<Item = T>>) {
-        event!(Level::INFO, "running spider '{}'", spider.name());
+        tracing::info!("running spider '{}'", spider.name());
         let mut visited_urls = HashSet::<String>::new();
         let crawling_concurrency = self.crawling_concurrency;
         let crawling_queue_capacity = crawling_concurrency * 400;
@@ -54,7 +53,7 @@ impl Crawler {
         let barrier = Arc::new(Barrier::new(3));
 
         for url in spider.start_urls() {
-            event!(Level::INFO, start_url = url);
+            tracing::info!(start_url = url);
             visited_urls.insert(url.clone());
             let _ = urls_to_visit_tx.send(url).await;
         }
@@ -82,7 +81,7 @@ impl Crawler {
         );
 
         loop {
-            if let Some((visited_url, new_urls)) = new_urls_rx.try_recv().ok() {
+            if let Ok((visited_url, new_urls)) = new_urls_rx.try_recv() {
                 visited_urls.insert(visited_url);
 
                 for url in new_urls {
@@ -151,6 +150,7 @@ impl Crawler {
         });
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn launch_scrapers<T: Send + 'static>(
         &self,
         concurrency: usize,
@@ -167,7 +167,7 @@ impl Crawler {
         tokio::spawn(async move {
             tokio_stream::wrappers::ReceiverStream::new(urls_to_visit)
                 .for_each_concurrent(concurrency, |queued_url| {
-                    let queued_url = queued_url.clone();
+                    let queued_url = queued_url;
                     async {
                         active_spiders.fetch_add(1, Ordering::SeqCst);
                         let mut urls = Vec::new();

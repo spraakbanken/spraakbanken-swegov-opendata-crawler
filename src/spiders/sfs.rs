@@ -21,9 +21,7 @@ impl SfsSpider {
             user_agent: user_agent_opt,
             output_path,
         } = options;
-        let user_agent = user_agent_opt
-            .as_ref()
-            .map(|s| s.as_str())
+        let user_agent = user_agent_opt.as_deref()
             .unwrap_or(crate::APP_USER_AGENT);
         fs::create_dir_all(&output_path).expect("spiders/sfs: can't create output_path");
         let output_path = output_path
@@ -112,7 +110,7 @@ impl super::Spider for SfsSpider {
         tracing::trace!("response status: {}", response.status());
 
         if !response.status().is_success() {
-            let status_code = response.status().clone();
+            let status_code = response.status();
             tracing::error!(
                 "The request returned '{}': '{}",
                 response.status(),
@@ -164,7 +162,7 @@ impl super::Spider for SfsSpider {
                     tracing::error!("item={:?}", item);
                     Error::UnexpectedJsonFormat("Can't find 'dokumentlista.@q".into())
                 })?
-                .replace("&", "_");
+                .replace('&', "_");
         } else if let Some(dokumentstatus) = item.get("dokumentstatus") {
             let dokument_typ = dokumentstatus["dokument"]["typ"]
                 .as_str()
@@ -178,7 +176,7 @@ impl super::Spider for SfsSpider {
                 .ok_or_else(|| {
                     Error::UnexpectedJsonFormat("can't find 'dokument.dok_id'".into())
                 })?;
-            file_name = dok_id.replace(" ", "_");
+            file_name = dok_id.replace(' ', "_");
         }
 
         tracing::debug!("creating dirs {:?}", path);
