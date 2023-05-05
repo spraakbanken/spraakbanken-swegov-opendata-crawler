@@ -6,12 +6,12 @@ use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
 use crate::crawler::Crawler;
 
-mod crawler;
-// mod error;
 mod configuration;
+mod crawler;
+mod error;
 mod spiders;
 
-pub use anyhow::Error;
+pub use crate::error::Error;
 
 #[tokio::main]
 async fn main() {

@@ -42,6 +42,12 @@ impl Crawler {
         let processing_queue_capacity = processing_concurrency * 10;
         let active_spiders = Arc::new(AtomicUsize::new(0));
 
+        // Statistics
+        let num_scrapings = Arc::new(AtomicUsize::new(0));
+        let num_scrape_errors = Arc::new(AtomicUsize::new(0));
+        let num_processings = Arc::new(AtomicUsize::new(0));
+        let num_process_errors = Arc::new(AtomicUsize::new(0));
+
         let (urls_to_visit_tx, urls_to_visit_rx) = mpsc::channel(crawling_queue_capacity);
         let (items_tx, items_rx) = mpsc::channel(processing_queue_capacity);
         let (new_urls_tx, mut new_urls_rx) = mpsc::channel(crawling_queue_capacity);
@@ -55,6 +61,8 @@ impl Crawler {
 
         self.launch_processors(
             processing_concurrency,
+            num_processings.clone(),
+            num_process_errors.clone(),
             spider.clone(),
             items_rx,
             barrier.clone(),
@@ -62,6 +70,8 @@ impl Crawler {
 
         self.launch_scrapers(
             crawling_concurrency,
+            num_scrapings.clone(),
+            num_scrape_errors.clone(),
             spider.clone(),
             urls_to_visit_rx,
             new_urls_tx.clone(),
@@ -78,7 +88,7 @@ impl Crawler {
                 for url in new_urls {
                     if !visited_urls.contains(&url) {
                         visited_urls.insert(url.clone());
-                        event!(Level::DEBUG, "queueing: {}", url);
+                        tracing::debug!("queueing: {}", url);
                         let _ = urls_to_visit_tx.send(url).await;
                     }
                 }
@@ -95,18 +105,32 @@ impl Crawler {
             sleep(Duration::from_millis(5)).await;
         }
 
-        event!(Level::INFO, "crawler: control loop exited");
+        tracing::info!("crawler: control loop exited");
 
         // we drop the transmitter in order to close the stream
         drop(urls_to_visit_tx);
 
         // and then we wait for the streams to complete
         barrier.wait().await;
+
+        let num_procs = num_processings.load(Ordering::Relaxed);
+        let num_proc_errors = num_process_errors.load(Ordering::Relaxed);
+        let num_scrapes = num_scrapings.load(Ordering::Relaxed);
+        let num_scrap_errors = num_scrape_errors.load(Ordering::Relaxed);
+        tracing::info!(
+            num_processings = num_procs,
+            num_process_errors = num_proc_errors,
+            num_scrapings = num_scrapes,
+            num_scrape_errors = num_scrap_errors,
+            "statistics"
+        );
     }
 
     fn launch_processors<T: Send + 'static>(
         &self,
         concurrency: usize,
+        num_processings: Arc<AtomicUsize>,
+        num_process_errors: Arc<AtomicUsize>,
         spider: Arc<dyn Spider<Item = T>>,
         items: mpsc::Receiver<T>,
         barrier: Arc<Barrier>,
@@ -114,9 +138,9 @@ impl Crawler {
         tokio::spawn(async move {
             tokio_stream::wrappers::ReceiverStream::new(items)
                 .for_each_concurrent(concurrency, |item| async {
-                    // let span = tracing::info_span!("processing");
-                    // let _enter = span.enter();
+                    num_processings.fetch_add(1, Ordering::SeqCst);
                     let _ = spider.process(item).await.map_err(|err| {
+                        num_process_errors.fetch_add(1, Ordering::SeqCst);
                         tracing::error!("{:?}", err);
                         err
                     });
@@ -130,6 +154,8 @@ impl Crawler {
     fn launch_scrapers<T: Send + 'static>(
         &self,
         concurrency: usize,
+        num_scrapings: Arc<AtomicUsize>,
+        num_scrape_errors: Arc<AtomicUsize>,
         spider: Arc<dyn Spider<Item = T>>,
         urls_to_visit: mpsc::Receiver<String>,
         new_urls_tx: mpsc::Sender<(String, Vec<String>)>,
@@ -145,12 +171,12 @@ impl Crawler {
                     async {
                         active_spiders.fetch_add(1, Ordering::SeqCst);
                         let mut urls = Vec::new();
-                        // let span = tracing::info_span!("scraping", url = queued_url);
-                        // let _enter = span.enter();
+                        num_scrapings.fetch_add(1, Ordering::SeqCst);
                         let res = spider
                             .scrape(queued_url.clone())
                             .await
                             .map_err(|err| {
+                                num_scrape_errors.fetch_add(1, Ordering::SeqCst);
                                 tracing::error!("{:?}", err);
                                 err
                             })

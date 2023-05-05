@@ -7,7 +7,8 @@ use flate2::Compression;
 use reqwest::{Client, ClientBuilder};
 use serde_json::Value as JsonValue;
 use std::{fs, io};
-use tracing::{event, Level};
+use tracing::{event, info_span, Level};
+use ulid::Ulid;
 
 use crate::Error;
 
@@ -72,7 +73,7 @@ impl Default for SfsSpiderOptions {
 }
 #[async_trait]
 impl super::Spider for SfsSpider {
-    type Item = JsonOrLista;
+    type Item = JsonValue;
 
     fn name(&self) -> String {
         String::from("sfs")
@@ -111,87 +112,109 @@ impl super::Spider for SfsSpider {
 
         let dokument_url = "https://data.riksdagen.se/dokumentstatus";
         tracing::debug!("calling {}", url);
-        let response = self
-            .http_client
-            .get(&url)
-            .send()
-            .await
-            .with_context(|| format!("Failed fetching url='{}'", url))?;
+        let response = self.http_client.get(&url).send().await.map_err(|err| {
+            tracing::error!("Failed fetching: {:?}", err);
+            err
+        })?;
+
         tracing::trace!("response status: {}", response.status());
+
+        if !response.status().is_success() {
+            let status_code = response.status().clone();
+            tracing::error!(
+                "The request returned '{}': '{}",
+                response.status(),
+                response.text().await?
+            );
+            return Err(Error::RequestReturnedError(status_code));
+        }
+
+        let item: JsonValue = response.json().await.map_err(|err| {
+            tracing::error!("Failed parsing JSON: {}", err);
+            err
+        })?;
         if url.contains("dokumentlista") {
-            // let text = response.text().await?;
-            // println!("text={}", text);
-            let DokumentListaPage {
-                dokumentlista: dokument_lista,
-            } = response.json().await.with_context(|| {
-                format!("Failed parsing JSON as dokumentlista for url='{}'", url)
-            })?;
-            // println!("lista={:#?}", dokument_lista);
-            new_urls.push(dokument_lista.nasta_sida.clone());
-            for dokument in &dokument_lista.dokument {
-                new_urls.push(format!("{dokument_url}/{}?utdata=json", dokument.dok_id))
+            if let Some(nasta_sida) = item["dokumentlista"].get("@nasta_sida") {
+                if let Some(url) = nasta_sida.as_str() {
+                    new_urls.push(url.into());
+                }
             }
-            items.push(JsonOrLista::Lista(dokument_lista));
+            for dokument in item["dokumentlista"]["dokument"]
+                .as_array()
+                .ok_or_else(|| {
+                    Error::UnexpectedJsonFormat("'dokumentlist.dokument' is not an array".into())
+                })?
+            {
+                let dok_id = dokument["dok_id"].as_str().ok_or_else(|| {
+                    Error::UnexpectedJsonFormat("dokument is missing 'dok_id'".into())
+                })?;
+                new_urls.push(format!("{dokument_url}/{}?utdata=json", dok_id))
+            }
         } else if url.contains("dokumentstatus") {
-            let dokument: JsonValue = response.json().await.with_context(|| {
-                format!("Failed parsing JSON as dokumentstatus for url='{}'", url)
-            })?;
-            items.push(JsonOrLista::Dokument(dokument));
+            tracing::trace!("scraping dokumentstatus");
         } else {
             tracing::error!("don't know how to scrape '{}'", url);
-            return Err(anyhow!("don't know how to scrape '{}'", url));
         }
-        // todo!("impl scrape")
+        items.push(item);
         Ok((items, new_urls))
     }
 
     #[tracing::instrument(skip(item))]
     async fn process(&self, item: Self::Item) -> Result<(), Error> {
         let mut path = self.output_path.clone();
+        let mut file_name = String::new();
         tracing::trace!("{:?}", item);
-        match item {
-            JsonOrLista::Dokument(item) => {
-                let dokumentstatus = &item["dokumentstatus"];
-                let dokument_typ = dokumentstatus["dokument"]["typ"]
-                    .as_str()
-                    .unwrap_or("NO_TYP");
-                path.push(dokument_typ);
-                let dokument_rm = dokumentstatus["dokument"]["rm"].as_str().unwrap_or("NO_RM");
-                path.push(dokument_rm);
-                tracing::debug!("creating dirs {:?}", path);
-                tokio::fs::create_dir_all(&path).await?;
-                let file_name = dokumentstatus["dokument"]["dok_id"]
-                    .as_str()
-                    .ok_or(anyhow!("spiders/sfs: can't get dokument.dok_id"))?;
-                path.push(&file_name.replace(" ", "_"));
-                // let file_name = format!("{file_name}.json");
-                path.set_extension("json.gz");
-                tracing::debug!("creating file {:?}", path);
-                let file = std::fs::File::create(path)?;
-                let compress_writer = flate2::write::GzEncoder::new(file, Compression::default());
-                let writer = std::io::BufWriter::new(compress_writer);
+        if let Some(dokument_lista) = item.get("dokumentlista") {
+            path.push("dokumentlista");
+            file_name = dokument_lista["@q"]
+                .as_str()
+                .ok_or_else(|| {
+                    tracing::error!("item={:?}", item);
+                    Error::UnexpectedJsonFormat("Can't find 'dokumentlista.@q".into())
+                })?
+                .replace("&", "_");
+        } else if let Some(dokumentstatus) = item.get("dokumentstatus") {
+            let dokument_typ = dokumentstatus["dokument"]["typ"]
+                .as_str()
+                .unwrap_or("NO_TYP");
+            path.push(dokument_typ);
+            let dokument_rm = dokumentstatus["dokument"]["rm"].as_str().unwrap_or("NO_RM");
+            path.push(dokument_rm);
 
-                tracing::debug!("writing JSON");
-                serde_json::to_writer(writer, &item)?;
-            }
-            JsonOrLista::Lista(lista) => {
-                path.push("dokumentlista");
-                tracing::debug!("creating dirs {:?}", path);
-                tokio::fs::create_dir_all(&path).await?;
-
-                path.push(&lista.q.replace("&", "_"));
-                // let file_name = format!("{file_name}.json");
-                path.set_extension("json.gz");
-                tracing::debug!("creating file {:?}", path);
-                let file = std::fs::File::create(path)?;
-                let compress_writer = flate2::write::GzEncoder::new(file, Compression::default());
-                let writer = std::io::BufWriter::new(compress_writer);
-                tracing::debug!("writing JSON");
-                serde_json::to_writer(writer, &lista)?;
-            }
+            let dok_id = dokumentstatus["dokument"]["dok_id"]
+                .as_str()
+                .ok_or_else(|| {
+                    Error::UnexpectedJsonFormat("can't find 'dokument.dok_id'".into())
+                })?;
+            let file_name = dok_id.replace(" ", "_");
         }
-        // todo!("impl process")
-        // println!("process: dokument={:#?}", item);
+
+        tracing::debug!("creating dirs {:?}", path);
+        tokio::fs::create_dir_all(&path).await.map_err(|err| {
+            tracing::error!("failed creating path='{}'", path.display());
+            err
+        })?;
+        if file_name.is_empty() {
+            path.push(format!("unknown-{}", Ulid::new()));
+        } else {
+            path.push(&file_name);
+        }
+        // let file_name = format!("{file_name}.json");
+        path.set_extension("json.gz");
+        let span = info_span!("creating file filename='{}'", "{}", path.display());
+        let _enter = span.enter();
+        tracing::debug!("creating file {:?}", path);
+        let file = std::fs::File::create(path).map_err(|err| {
+            tracing::error!("failed creating file");
+            err
+        })?;
+        let compress_writer = flate2::write::GzEncoder::new(file, Compression::default());
+        let writer = std::io::BufWriter::new(compress_writer);
+        tracing::debug!("writing JSON");
+        serde_json::to_writer(writer, &item).map_err(|err| {
+            tracing::error!("failed writing JSON");
+            err
+        })?;
         Ok(())
     }
 }

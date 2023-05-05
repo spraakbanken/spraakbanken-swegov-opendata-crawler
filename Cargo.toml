@@ -19,3 +19,4 @@ tokio = { version = "1.28.0", features = ["macros", "rt-multi-thread", "fs"] }
 tokio-stream = "0.1.14"
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter", "json"] }
+ulid = "1.0.0"
