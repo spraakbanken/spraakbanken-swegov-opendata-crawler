@@ -140,7 +140,6 @@ impl Crawler {
                     num_processings.fetch_add(1, Ordering::SeqCst);
                     let _ = spider.process(item).await.map_err(|err| {
                         num_process_errors.fetch_add(1, Ordering::SeqCst);
-                        tracing::error!("{:?}", err);
                         err
                     });
                 })
@@ -177,7 +176,6 @@ impl Crawler {
                             .await
                             .map_err(|err| {
                                 num_scrape_errors.fetch_add(1, Ordering::SeqCst);
-                                tracing::error!("{:?}", err);
                                 err
                             })
                             .ok();
