@@ -21,8 +21,7 @@ impl SfsSpider {
             user_agent: user_agent_opt,
             output_path,
         } = options;
-        let user_agent = user_agent_opt.as_deref()
-            .unwrap_or(crate::APP_USER_AGENT);
+        let user_agent = user_agent_opt.as_deref().unwrap_or(crate::APP_USER_AGENT);
         fs::create_dir_all(&output_path).expect("spiders/sfs: can't create output_path");
         let output_path = output_path
             .canonicalize()
@@ -171,12 +170,10 @@ impl super::Spider for SfsSpider {
             let dokument_rm = dokumentstatus["dokument"]["rm"].as_str().unwrap_or("NO_RM");
             path.push(dokument_rm);
 
-            let dok_id = dokumentstatus["dokument"]["dok_id"]
+            file_name = dokumentstatus["dokument"]["dok_id"]
                 .as_str()
-                .ok_or_else(|| {
-                    Error::UnexpectedJsonFormat("can't find 'dokument.dok_id'".into())
-                })?;
-            file_name = dok_id.replace(' ', "_");
+                .ok_or_else(|| Error::UnexpectedJsonFormat("can't find 'dokument.dok_id'".into()))?
+                .replace(' ', "_");
         }
 
         tracing::debug!("creating dirs {:?}", path);
