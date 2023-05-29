@@ -67,7 +67,7 @@ impl Default for SfsSpiderOptions {
 }
 #[async_trait]
 impl super::Spider for SfsSpider {
-    type Item = JsonValue;
+    type Item = (String, JsonValue);
 
     fn name(&self) -> String {
         String::from("sfs")
@@ -99,7 +99,8 @@ impl super::Spider for SfsSpider {
         let mut new_urls = Vec::new();
         let mut items = Vec::new();
 
-        let dokument_url = "https://data.riksdagen.se/dokumentstatus";
+        let dokumentstatus_url = "https://data.riksdagen.se/dokumentstatus";
+        let dokument_url = "https://data.riksdagen.se/dokument";
         tracing::debug!("calling {}", url);
         let response = self.http_client.get(&url).send().await.map_err(|err| {
             tracing::error!("Failed fetching: {:?}", err);
@@ -137,28 +138,51 @@ impl super::Spider for SfsSpider {
                 let dok_id = dokument["dok_id"].as_str().ok_or_else(|| {
                     Error::UnexpectedJsonFormat("dokument is missing 'dok_id'".into())
                 })?;
-                new_urls.push(format!("{dokument_url}/{}?utdata=json", dok_id))
+                // let new_url = if dok_id.contains("sfs-N") {
+                //     format!("{dokument_url}/{dok_id}/json")
+                // } else if dok_id.contains("riks") {
+                //     format!("{dokumentstatus_url}/{dok_id}.json")
+                // } else {
+                //     format!("{dokumentstatus_url}/{dok_id}?utdata=json")
+                // };
+                let new_url = format!("{dokument_url}/{dok_id}.json");
+                new_urls.push(new_url);
             }
         } else if url.contains("dokumentstatus") {
             tracing::trace!("scraping dokumentstatus");
+        } else if url.contains("dokument") {
+            tracing::trace!("scraping dokument");
+            let mut create_new_url = true;
+            if let Some(dokumentstatus) = item.get("dokumentstatus") {
+                if let Some(dokument) = dokumentstatus.get("dokument") {
+                    if let Some(_dokument) = dokument.get("dok_id") {
+                        create_new_url = false;
+                    }
+                }
+            }
+            if create_new_url {
+                let new_url = url.replace("dokument", "dokumentstatus");
+                new_urls.push(new_url);
+            }
         } else {
-            tracing::error!("don't know how to scrape '{}'", url);
+            tracing::warn!("don't know how to scrape '{}'", url);
         }
-        items.push(item);
+        items.push((url, item));
         Ok((items, new_urls))
     }
 
     #[tracing::instrument(skip(item))]
     async fn process(&self, item: Self::Item) -> Result<(), Error> {
+        let (url, item) = item;
         let mut path = self.output_path.clone();
         let mut file_name = String::new();
-        tracing::trace!("{:?}", item);
+        tracing::info!("analyzing url={}", url);
         if let Some(dokument_lista) = item.get("dokumentlista") {
             path.push("dokumentlista");
             file_name = dokument_lista["@q"]
                 .as_str()
                 .ok_or_else(|| {
-                    tracing::error!("item={:?}", item);
+                    tracing::error!("item={:?} url={}", item, url);
                     Error::UnexpectedJsonFormat("Can't find 'dokumentlista.@q".into())
                 })?
                 .replace('&', "_");
@@ -172,34 +196,44 @@ impl super::Spider for SfsSpider {
 
             file_name = dokumentstatus["dokument"]["dok_id"]
                 .as_str()
-                .ok_or_else(|| Error::UnexpectedJsonFormat("can't find 'dokument.dok_id'".into()))?
-                .replace(' ', "_");
+                .unwrap_or_else(|| {
+                    tracing::error!("no dok_id in item={:?} for url={}", item, url);
+                    ""
+                    // Error::UnexpectedJsonFormat("can't find 'dokument.dok_id'".into())
+                })
+                .replace(' ', "_")
+                .replace('.', "_");
         }
 
-        tracing::debug!("creating dirs {:?}", path);
         tokio::fs::create_dir_all(&path).await.map_err(|err| {
-            tracing::error!("failed creating path='{}'", path.display());
+            tracing::error!("failed creating path='{}', url={}", path.display(), url);
             err
         })?;
         if file_name.is_empty() {
-            path.push(format!("unknown-{}", Ulid::new()));
+            path.push(
+                format!("unknown-{}-{}", url, Ulid::new())
+                    .replace('/', "_")
+                    .replace(':', "")
+                    .replace(' ', "_")
+                    .replace('.', "_"),
+            );
         } else {
             path.push(&file_name);
         }
         // let file_name = format!("{file_name}.json");
         path.set_extension("json.gz");
-        let span = tracing::info_span!("creating file filename='{}'", "{}", path.display());
+        let span = tracing::info_span!("writing output", "{}", path.display());
         let _enter = span.enter();
-        tracing::debug!("creating file {:?}", path);
+        tracing::debug!("creating file");
         let file = std::fs::File::create(path).map_err(|err| {
-            tracing::error!("failed creating file");
+            tracing::error!("failed creating file, url={}", url);
             err
         })?;
         let compress_writer = flate2::write::GzEncoder::new(file, Compression::default());
         let writer = std::io::BufWriter::new(compress_writer);
         tracing::debug!("writing JSON");
         serde_json::to_writer(writer, &item).map_err(|err| {
-            tracing::error!("failed writing JSON");
+            tracing::error!("failed writing JSON, url={}", url);
             err
         })?;
         Ok(())

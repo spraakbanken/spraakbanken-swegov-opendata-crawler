@@ -10,7 +10,7 @@ use std::{
 };
 use tokio::{
     sync::{mpsc, Barrier},
-    time::sleep,
+    time::{sleep, Instant},
 };
 
 pub struct Crawler {
@@ -34,6 +34,7 @@ impl Crawler {
 
     pub async fn run<T: Send + 'static>(&self, spider: Arc<dyn Spider<Item = T>>) {
         tracing::info!("running spider '{}'", spider.name());
+        let starting_time = Instant::now();
         let mut visited_urls = HashSet::<String>::new();
         let crawling_concurrency = self.crawling_concurrency;
         let crawling_queue_capacity = crawling_concurrency * 400;
@@ -116,11 +117,13 @@ impl Crawler {
         let num_proc_errors = num_process_errors.load(Ordering::Relaxed);
         let num_scrapes = num_scrapings.load(Ordering::Relaxed);
         let num_scrap_errors = num_scrape_errors.load(Ordering::Relaxed);
+        let total_running_time = format!("{:?}", starting_time.elapsed());
         tracing::info!(
             num_processings = num_procs,
             num_process_errors = num_proc_errors,
             num_scrapings = num_scrapes,
             num_scrape_errors = num_scrap_errors,
+            running_time = total_running_time,
             "statistics"
         );
     }
@@ -140,6 +143,7 @@ impl Crawler {
                     num_processings.fetch_add(1, Ordering::SeqCst);
                     let _ = spider.process(item).await.map_err(|err| {
                         num_process_errors.fetch_add(1, Ordering::SeqCst);
+                        // tracing::error!("Processing error: {:?}", err);
                         err
                     });
                 })

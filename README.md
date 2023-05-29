@@ -21,6 +21,7 @@ The built binary is in `target/release/fetch-sfs`.
 - **Output path** By default, `fetch-sfs` writes all collected pages as json files in `./output`, this can be changed by setting the key `sfs.config_path` in a [configuration file](#configuration-file).
 - **User agent** By default, the user agent is set to `fetch-sfs/0.1.0`, this can be changed by set the key `sfs.user_agent` in a [configuration file](#configuration-file).
 
+
 #### Configuration file
 Configurations can be given in a file called  `config.json` that is placed in the current directory.
 
