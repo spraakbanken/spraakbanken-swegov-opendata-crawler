@@ -1,4 +1,6 @@
 # fetch-sfs
+Code moved to <https://github.com/spraakbanken/swegov-opendata-rs>.
+
 Program for collecting Svensk Författningssamling from https://data.riksdagen.se
 
 ## Build
